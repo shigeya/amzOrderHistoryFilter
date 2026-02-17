@@ -541,7 +541,7 @@ function wait_for_rendering( callback, options ) {
             if ( typeof callback == 'function' ) {
                 var jq_target = $( target_element ).clone();
                 
-                jq_target.find( 'script,iframe' ).remove();
+                jq_target.find( 'script,iframe,#navbar-main,#navFooter,#rhf' ).remove();
                 
                 if ( OPTIONS.REMOVE_REISSUE_STRINGS ) {
                     var jq_receipt_header = jq_target.find( 'b.h1' ),
@@ -2667,7 +2667,9 @@ var TemplateReceiptOutputPage = {
                 'td.addressee-container {position: relative;}',
                 'div.addressee {position: absolute; width: 200%; bottom: 3px; right: 16px; font-size: 14px; text-align: right;}',
                 'div.addressee.digital {bottom: 6px; right: 24px; font-size: 16px;}',
+                '#navbar-main {display: none;}',
                 '#navFooter {display: none;}',
+                '#rhf {display: none;}',
             ].join( '\n' ) )
             .appendTo( $( 'head' ) );
         
@@ -3134,62 +3136,144 @@ var TemplateReceiptOutputPage = {
             },
             order_url = '',
             receipt_url = '',
-            
+
             jq_order_summary = jq_receipt_body.find( '.orderSummary:first' ),
             jq_order_summary_header = jq_order_summary.find( 'table:eq(0)' ),
             jq_order_summary_content = jq_order_summary.find( 'table.sample' );
-        
-        /*
-        //order_date = get_formatted_date_string( get_child_text_from_jq_element( jq_order_summary_header.find( 'td:has(b:contains("注文日")):first' ) ) );
-        //order_id = get_child_text_from_jq_element( jq_order_summary_header.find( 'td:has(b:contains("注文番号")):first' ) );
-        */
-        order_date = get_formatted_date_string( get_child_text_from_jq_element(
-            jq_order_summary_header.find( 'td' ).filter( function () {
-                return ( 0 <= $( this ).find( 'b' ).text().indexOf( '注文日' ) );
-            } ).first()
-        ) );
-        order_id = get_child_text_from_jq_element( 
-            jq_order_summary_header.find( 'td' ).filter( function () {
-                return ( 0 <= $( this ).find( 'b' ).text().indexOf( '注文番号' ) );
-            } ).first()
-        );
-        
-        jq_order_summary_content.find( 'table table tr:gt(0)' ).each( function () {
-            var jq_item = $( this ),
-                /*
-                jq_item_info = jq_item.find( 'td[align="left"]' ),
-                jq_item_price = jq_item.find( 'td[align="right"]' );
-                */
-                // 2020/10初旬頃から微妙に変更があった模様
-                jq_item_info = jq_item.find( '> td:eq(0)' ),
-                jq_item_price = jq_item.find( '> td:eq(1)' );
-            
-            if ( ( jq_item_info.length <= 0 ) || ( jq_item_price.length <= 0 ) ) {
-                return;
+
+        // [メモ] 新しいAmazonページでは .orderSummary が存在せず、
+        // #orderDetails + data-component ベースの構造に変更されている
+        var $orderDetails = jq_receipt_body.find( '#orderDetails:first' ),
+            is_new_format = ( jq_order_summary.length < 1 ) && ( 0 < $orderDetails.length );
+
+        if ( is_new_format ) {
+            // 新フォーマット: data-component ベースの構造から取得
+            const
+                $briefOrderInfoInvoice = $orderDetails.find('[data-component="briefOrderInfoInvoice"]'),
+                $briefOrderInfoInvoiceLeftGrid = (() => {
+                    const $grid = $briefOrderInfoInvoice.find('[data-component="briefOrderInfoInvoiceLeftGrid"]');
+                    return (0 < $grid.length) ? $grid : $briefOrderInfoInvoice.find('[data-component="briefOrderInfoInvoiceLeftGridDesktop"]');
+                })(),
+                $orderDate = $briefOrderInfoInvoiceLeftGrid.find('[data-component="orderDate"] > span'),
+                $orderId = $briefOrderInfoInvoiceLeftGrid.find('[data-component="orderId"] > span');
+
+            if (0 < $orderDate.length) {
+                order_date = get_formatted_date_string($orderDate.text().trim());
             }
-            
-            var jq_item_name = jq_item_info.find( 'b:first' ),
-                jq_item_link = jq_item_name.find( 'a' );
-            
-            item_list.push( {
-                name : jq_item_name.text().trim(),
-                remarks : get_child_text_from_jq_element( jq_item_info ),
-                price : get_price_number( get_child_text_from_jq_element( jq_item_price ) ),
-                number : 1,
-                url : ( 0 < jq_item_link.length ) ? get_absolute_url( jq_item_link.attr( 'href' ) ) : ''
+            if (0 < $orderId.length) {
+                order_id = $orderId.text().trim();
+            }
+
+            // 商品リスト: purchasedItems 内の itemTitle / unitPrice
+            $orderDetails.find('[data-component="purchasedItems"]').each(function () {
+                const
+                    $purchased = $(this),
+                    $itemTitle = $purchased.find('[data-component="itemTitle"]'),
+                    $unitPrice = $purchased.find('[data-component="unitPrice"]'),
+                    $itemLink = $itemTitle.find('a.a-link-normal'),
+                    item_name = $itemLink.length > 0 ? $itemLink.text().trim() : $itemTitle.text().trim(),
+                    item_url = $itemLink.length > 0 ? get_absolute_url($itemLink.attr('href')) : '',
+                    price_text = $unitPrice.find('.a-offscreen').text().trim(),
+                    price = get_price_number(price_text),
+                    $merchant = $purchased.find('[data-component="orderedMerchant"]'),
+                    remarks = $merchant.length > 0 ? $merchant.text().trim() : '';
+
+                if (item_name) {
+                    item_list.push({
+                        name: item_name,
+                        remarks: remarks,
+                        price: price,
+                        number: 1,
+                        url: item_url
+                    });
+                }
+            });
+
+            // 小計・合計: chargeSummary 内の od-line-item-row
+            $orderDetails.find('[data-component="chargeSummary"] .od-line-item-row').each(function () {
+                const
+                    $row = $(this),
+                    $label = $row.find('.od-line-item-row-label'),
+                    $content = $row.find('.od-line-item-row-content');
+
+                if (($label.length < 1) || ($content.length < 1)) { return; }
+
+                const
+                    name = $label.text().replace(/[:：]/g, '').trim(),
+                    price = get_price_number($content.text());
+
+                if (/商品の小計/.test(name)) {
+                    order_subtotal_price = price;
+                } else if (/注文の合計|注文合計/.test(name)) {
+                    order_total_price = price;
+                } else if (/請求額/.test(name)) {
+                    order_billing_amount = price;
+                }
+            });
+
+            // 配送先/受取人: shippingAddress
+            const $shippingAddr = $orderDetails.find('[data-component="shippingAddress"] ul.a-unordered-list li:first .a-list-item');
+            if (0 < $shippingAddr.length) {
+                order_destination = $shippingAddr.first().text().trim();
+            }
+        }
+        else {
+            // 旧フォーマット: .orderSummary + table ベースの構造
+            /*
+            //order_date = get_formatted_date_string( get_child_text_from_jq_element( jq_order_summary_header.find( 'td:has(b:contains("注文日")):first' ) ) );
+            //order_id = get_child_text_from_jq_element( jq_order_summary_header.find( 'td:has(b:contains("注文番号")):first' ) );
+            */
+            order_date = get_formatted_date_string( get_child_text_from_jq_element(
+                jq_order_summary_header.find( 'td' ).filter( function () {
+                    return ( 0 <= $( this ).find( 'b' ).text().indexOf( '注文日' ) );
+                } ).first()
+            ) );
+            order_id = get_child_text_from_jq_element(
+                jq_order_summary_header.find( 'td' ).filter( function () {
+                    return ( 0 <= $( this ).find( 'b' ).text().indexOf( '注文番号' ) );
+                } ).first()
+            );
+
+            jq_order_summary_content.find( 'table table tr:gt(0)' ).each( function () {
+                var jq_item = $( this ),
+                    /*
+                    jq_item_info = jq_item.find( 'td[align="left"]' ),
+                    jq_item_price = jq_item.find( 'td[align="right"]' );
+                    */
+                    // 2020/10初旬頃から微妙に変更があった模様
+                    jq_item_info = jq_item.find( '> td:eq(0)' ),
+                    jq_item_price = jq_item.find( '> td:eq(1)' );
+
+                if ( ( jq_item_info.length <= 0 ) || ( jq_item_price.length <= 0 ) ) {
+                    return;
+                }
+
+                var jq_item_name = jq_item_info.find( 'b:first' ),
+                    jq_item_link = jq_item_name.find( 'a' );
+
+                item_list.push( {
+                    name : jq_item_name.text().trim(),
+                    remarks : get_child_text_from_jq_element( jq_item_info ),
+                    price : get_price_number( get_child_text_from_jq_element( jq_item_price ) ),
+                    number : 1,
+                    url : ( 0 < jq_item_link.length ) ? get_absolute_url( jq_item_link.attr( 'href' ) ) : ''
+                } );
             } );
-        } );
+
+            /*
+            //order_subtotal_price = get_price_number( get_child_text_from_jq_element( jq_order_summary_content.find( 'tr:last td[colspan][align="right"]:contains("商品小計")' ) ) );
+            */
+            // 2020/10初旬頃から微妙に変更があった模様
+            order_subtotal_price = get_price_number( get_child_text_from_jq_element( jq_order_summary_content.find( 'tr:last td[colspan].a-text-right:contains("商品小計")' ) ) );
+            order_total_price = get_price_number( get_child_text_from_jq_element( jq_order_summary_header.find( 'b:contains("注文の合計")' ) ) );
+        }
         
-        /*
-        //order_subtotal_price = get_price_number( get_child_text_from_jq_element( jq_order_summary_content.find( 'tr:last td[colspan][align="right"]:contains("商品小計")' ) ) );
-        */
-        // 2020/10初旬頃から微妙に変更があった模様
-        order_subtotal_price = get_price_number( get_child_text_from_jq_element( jq_order_summary_content.find( 'tr:last td[colspan].a-text-right:contains("商品小計")' ) ) );
-        order_total_price = get_price_number( get_child_text_from_jq_element( jq_order_summary_header.find( 'b:contains("注文の合計")' ) ) );
-        
+        // [メモ] 新フォーマットでは支払い情報がPaymentsPortal2 JSで動的に読み込まれるため、
+        // 静的HTMLからは取得できない。旧フォーマットの場合のみ支払い情報を解析する。
+        if ( ! is_new_format ) {
         var jq_payment_summary,
             jq_payment_summary_price_infos;
-        
+
         jq_payment_summary = jq_receipt_body.find( '[data-pmts-component-id][class*="-root-"]' );
         
         if ( 0 < jq_payment_summary.length ) {
@@ -3398,13 +3482,20 @@ var TemplateReceiptOutputPage = {
             }
         }
         order_status = get_child_text_from_jq_element( jq_order_summary_content.find( 'tr:first td[align="center"] font b' ) );
-        
+
         let jq_return_to_order_summary_container = jq_receipt_body.children( 'center:eq(-1)' );
         if ( jq_return_to_order_summary_container.length < 1 ) {
             jq_return_to_order_summary_container = jq_receipt_body.find('#a-page > center:eq(-1)' );
         }
         order_url = get_absolute_url( jq_return_to_order_summary_container.find( 'p > a' ).attr( 'href' ) );
         receipt_url = get_absolute_url( jq_receipt_body.children( 'h2.receipt' ).find( 'a' ).attr( 'href' ) );
+        } // end of if ( ! is_new_format ) - 旧フォーマット支払い情報
+
+        if ( is_new_format ) {
+            // 新フォーマット: URLはopen_parametersから取得
+            order_url = get_absolute_url( self.open_parameters.order_detail_url || '' );
+            receipt_url = get_absolute_url( self.open_parameters.request_order_url || '' );
+        }
         
         order_parameters = {
             order_date : order_date,
@@ -4796,16 +4887,29 @@ function init_order_page_in_iframe( open_parameters ) {
         
         get_item_info_list_digital = function ( jq_html_fragment ) {
             var item_info_list = [];
-            
+
+            // 旧フォーマット: .orderSummary 内のリンク
             jq_html_fragment.find( '.orderSummary a[href*="/dp/"]' ).each( function () {
                 var jq_item_link = $( this );
-                
+
                 item_info_list.push( {
                     item_url : get_absolute_url( jq_item_link.attr( 'href' ) ),
                     item_name : jq_item_link.text().replace( /[\s\u00a0\ufffd]+/g, ' ' ).trim()
                 } );
             } );
-            
+
+            // 新フォーマット: data-component="itemTitle" 内のリンク
+            if ( item_info_list.length < 1 ) {
+                jq_html_fragment.find( '[data-component="itemTitle"] a[href*="/dp/"]' ).each( function () {
+                    var jq_item_link = $( this );
+
+                    item_info_list.push( {
+                        item_url : get_absolute_url( jq_item_link.attr( 'href' ) ),
+                        item_name : jq_item_link.text().replace( /[\s\u00a0\ufffd]+/g, ' ' ).trim()
+                    } );
+                } );
+            }
+
             return item_info_list;
         }, // end of get_item_info_digital()
         
