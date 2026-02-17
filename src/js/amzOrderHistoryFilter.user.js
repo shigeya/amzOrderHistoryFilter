@@ -11,7 +11,7 @@
 // @include         https://www.amazon.co.jp/gp/digital/your-account/order-summary.html*
 // @include         https://www.amazon.co.jp/gp/css/summary/print.html*
 // @include         https://www.amazon.co.jp/ap/signin*
-// @require         https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js
+// @require         https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js
 // @require         https://greasyfork.org/scripts/398566-concurrent-promise/code/concurrent_promise.js?version=784632
 // @grant           GM_setValue
 // @grant           GM_getValue
